@@ -70,6 +70,20 @@ if ($versions.Count -eq 0) {
     }
 }
 
+# --- graphify (Wissensgraph des Projekts, https://github.com/Graphify-Labs/graphify) ---
+
+# Das PyPI-Paket heisst "graphifyy" (doppeltes y), der Befehl "graphify"
+Info "Installiere graphify ..."
+uv tool install --upgrade graphifyy
+$env:Path = [Environment]::GetEnvironmentVariable("Path", "User") + ";" + [Environment]::GetEnvironmentVariable("Path", "Machine")
+if (Get-Command graphify -ErrorAction SilentlyContinue) {
+    Info "Registriere graphify-Skill in Claude Code ..."
+    graphify install --platform windows
+} else {
+    Warn "graphify nicht im PATH. 'uv tool update-shell' ausfuehren, neues Terminal oeffnen,"
+    Warn "dann: graphify install --platform windows"
+}
+
 # --- Fertig ----------------------------------------------------------------
 
 Write-Host ""
@@ -77,3 +91,4 @@ Info "Fertig. Jetzt noch:"
 Write-Host "   1. Roblox Studio oeffnen (MCP-Plugin unter Plugins aktiv)"
 Write-Host "   2. Blender oeffnen, Taste N, Tab 'BlenderMCP' -> Connect"
 Write-Host "   3. 'claude' starten und mit /mcp pruefen"
+Write-Host "   4. Im Projektordner in Claude Code: /graphify .   (erzeugt graphify-out/)"
