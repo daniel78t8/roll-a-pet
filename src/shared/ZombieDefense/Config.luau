@@ -43,12 +43,15 @@ Config.Economy = {
 		Boss = 15,
 	},
 
-	-- Welle 1 gibt nur 20 % der Belohnung, das steigt bis Welle 10 auf 100 %.
-	-- Bruchteile werden gesammelt (0,2 Coins pro Kill -> jeder 5. Kill gibt 1 Coin).
-	EarlyGameMultiplier = 0.2,
-	EarlyGameRampWaves = 10,
-	GrowthPerWaveAfterRamp = 0.08, -- danach +8 % pro Welle
-	MaxMultiplier = 4,
+	-- Bis Welle 50 gibt es nur wenig Geld, damit neue Spieler nicht schnell
+	-- reich werden. Welle 1 = 10 %, Welle 25 = ca. 32 %, Welle 40 = ca. 67 %,
+	-- ab Welle 50 = 100 %. Die Kurve steigt erst langsam und am Ende schneller.
+	-- Bruchteile werden gesammelt (0,1 Coins pro Kill -> jeder 10. Kill gibt 1 Coin).
+	EarlyGameMultiplier = 0.1,
+	EarlyGameRampWaves = 50,
+	EarlyGameCurve = 2, -- 1 = gleichmaessig, hoeher = laenger wenig Geld
+	GrowthPerWaveAfterRamp = 0.05, -- nach Welle 50 +5 % pro Welle
+	MaxMultiplier = 3,
 
 	WaveBonusBase = 1, -- Bonus fuer jede ueberstandene Welle
 	WaveBonusPerWave = 1,

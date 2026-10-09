@@ -9,7 +9,7 @@ local Config = require(ReplicatedStorage.ZombieDefense.Config)
 local E = Config.Economy
 local Economy = {}
 
--- Gesammelte Bruchteile pro Spieler (z.B. 0,2 Coins pro Kill)
+-- Gesammelte Bruchteile pro Spieler (z.B. 0,1 Coins pro Kill)
 local fractions: { [Player]: number } = {}
 
 -- Findet den Coins-Wert in leaderstats (oder legt ihn an).
@@ -81,7 +81,7 @@ end
 function Economy.Multiplier(wave: number): number
 	local ramp = math.max(E.EarlyGameRampWaves, 2)
 	if wave <= ramp then
-		local t = (wave - 1) / (ramp - 1)
+		local t = ((wave - 1) / (ramp - 1)) ^ (E.EarlyGameCurve or 1)
 		return E.EarlyGameMultiplier + (1 - E.EarlyGameMultiplier) * t
 	end
 	return math.min(1 + (wave - ramp) * E.GrowthPerWaveAfterRamp, E.MaxMultiplier)

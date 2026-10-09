@@ -26,7 +26,7 @@ Alles steht in `ReplicatedStorage/ZombieDefense/Config`:
 | Was | Wo in Config |
 | --- | --- |
 | Name der Währung (leaderstats) | `Economy.CurrencyName` |
-| Geld am Anfang (Welle 1 = 20 %, ab Welle 10 = 100 %) | `Economy.EarlyGameMultiplier`, `Economy.EarlyGameRampWaves` |
+| Wenig Geld bis Welle 50 (Welle 1 = 10 %, ab Welle 50 = 100 %) | `Economy.EarlyGameMultiplier`, `Economy.EarlyGameRampWaves`, `Economy.EarlyGameCurve` |
 | Coins pro Zombie | `Economy.KillReward` |
 | Position der Map / des Portals | `Map.Origin`, `Map.LobbyPortalPosition` |
 | Anzahl der Rand-Plätze | `Map.SlotsPerSide` |
