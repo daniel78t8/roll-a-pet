@@ -1,0 +1,24 @@
+{
+  "name": "ZombieDefense_Installieren",
+  "tree": {
+    "$className": "Folder",
+    "1_in_ReplicatedStorage": {
+      "$className": "Folder",
+      "ZombieDefense": {
+        "$path": "src/shared/ZombieDefense"
+      }
+    },
+    "2_in_ServerScriptService": {
+      "$className": "Folder",
+      "ZombieDefense": {
+        "$path": "src/server/ZombieDefense"
+      }
+    },
+    "3_in_StarterPlayerScripts": {
+      "$className": "Folder",
+      "ZombieDefenseClient": {
+        "$path": "src/client/ZombieDefenseClient.client.luau"
+      }
+    }
+  }
+}

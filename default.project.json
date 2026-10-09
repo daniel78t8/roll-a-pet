@@ -1,0 +1,23 @@
+{
+  "name": "roll-a-pet",
+  "tree": {
+    "$className": "DataModel",
+    "ReplicatedStorage": {
+      "ZombieDefense": {
+        "$path": "src/shared/ZombieDefense"
+      }
+    },
+    "ServerScriptService": {
+      "ZombieDefense": {
+        "$path": "src/server/ZombieDefense"
+      }
+    },
+    "StarterPlayer": {
+      "StarterPlayerScripts": {
+        "ZombieDefenseClient": {
+          "$path": "src/client/ZombieDefenseClient.client.luau"
+        }
+      }
+    }
+  }
+}
