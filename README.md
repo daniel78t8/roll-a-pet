@@ -27,6 +27,8 @@ Alles steht in `ReplicatedStorage/ZombieDefense/Config`:
 | --- | --- |
 | Name der Währung (leaderstats) | `Economy.CurrencyName` |
 | Wenig Geld bis Welle 50 (Welle 1 = 10 %, ab Welle 50 = 100 %) | `Economy.EarlyGameMultiplier`, `Economy.EarlyGameRampWaves`, `Economy.EarlyGameCurve` |
+| Wie schnell Zombies stärker werden | `Waves.HealthGrowthPerWave`, `Waves.HealthGrowthQuadratic` |
+| Sounds (IDs, Lautstärke, Tonhöhe) | `Sounds.List` |
 | Coins pro Zombie | `Economy.KillReward` |
 | Position der Map / des Portals | `Map.Origin`, `Map.LobbyPortalPosition` |
 | Anzahl der Rand-Plätze | `Map.SlotsPerSide` |
@@ -41,6 +43,26 @@ Alles steht in `ReplicatedStorage/ZombieDefense/Config`:
 `PetInventory.GetPets` an. Pet-Models werden in `ReplicatedStorage/PetModels`
 oder `ServerStorage/PetModels` (bzw. `Pets`) gesucht; ohne Model gibt es ein
 buntes Platzhalter-Pet. Ein Model kann die Attribute `Rarity` und `Element` haben.
+
+## Geld-System (fair für neue und alte Spieler)
+
+- Bis Welle 50 gibt es wenig Geld (10 % → 100 %).
+- Die Belohnung richtet sich nach den Wellen, die **du selbst** in der Runde
+  geschafft hast. Wer bei Welle 45 dazukommt, bekommt trotzdem erst 10 %.
+- Kill-Coins werden nach Schaden aufgeteilt, niemand kann Kills klauen.
+- Den Wellen-Bonus gibt es nur, wenn deine Pets in der Welle mitgekämpft haben.
+- Wer die Map ohne platzierte Pets verlässt, verliert seinen Fortschritt.
+- Im HUD steht „💰 Diese Runde“ und der aktuelle Belohnungs-Anteil.
+
+Grobe Simulation, wie weit man kommt: 2 Common ≈ Welle 6, 3 Legendary ≈ Welle 33,
+3 Mythic ≈ Welle 55, 6 Mythic (2 Spieler) ≈ Welle 90.
+
+## Sounds
+
+Eingetragen sind eingebaute Roblox-Sounds (`rbxasset://sounds/...`), damit es
+sofort klingt. Bessere Sounds: in der Toolbox unter Audio suchen, die ID kopieren
+und in `Config.Sounds.List` als `Id = "rbxassetid://..."` eintragen. Sounds, die
+nicht laden, werden übersprungen.
 
 ## Effekte
 

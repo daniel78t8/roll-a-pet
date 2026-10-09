@@ -24,6 +24,7 @@ export type Zombie = {
 	BurnUntil: number,
 	BurnDps: number,
 	BurnOwner: Player?,
+	DamageBy: { [Player]: number }, -- fuer faire Aufteilung der Coins
 	Alive: boolean,
 }
 
@@ -36,8 +37,9 @@ local nextId = 0
 local pathLength = (Layout.ZombieEnd - Layout.ZombieStart).Magnitude
 
 -- Wird vom Hauptskript gesetzt
-ZombieService.OnKilled = function(_zombie: Zombie, _killer: Player?) end
+ZombieService.OnKilled = function(_zombie: Zombie) end
 ZombieService.OnReachedHut = function(_zombie: Zombie) end
+ZombieService.OnDamage = function(_player: Player, _amount: number) end
 
 local function weld(a: BasePart, b: BasePart, name: string, c0: CFrame, c1: CFrame): Motor6D
 	local m = Instance.new("Motor6D")
@@ -191,7 +193,8 @@ function ZombieService.Spawn(typeName: string, wave: number): Zombie
 	local def = Config.ZombieTypes[typeName]
 	nextId += 1
 	local model, root, fill = buildModel(typeName, def)
-	local healthMult = 1 + (wave - 1) * Config.Waves.HealthGrowthPerWave
+	local w = wave - 1
+	local healthMult = 1 + w * Config.Waves.HealthGrowthPerWave + w * w * (Config.Waves.HealthGrowthQuadratic or 0)
 	local maxHealth = math.floor(def.Health * healthMult + 0.5)
 
 	local z: Zombie = {
@@ -212,6 +215,7 @@ function ZombieService.Spawn(typeName: string, wave: number): Zombie
 		BurnUntil = 0,
 		BurnDps = 0,
 		BurnOwner = nil,
+		DamageBy = {},
 		Alive = true,
 	}
 
@@ -219,6 +223,7 @@ function ZombieService.Spawn(typeName: string, wave: number): Zombie
 		model:ScaleTo(def.Scale)
 	end
 	model.Name = "Z" .. z.Id
+	model.ModelStreamingMode = Enum.ModelStreamingMode.Atomic -- immer komplett laden
 	model:SetAttribute("ZombieId", z.Id)
 	model:SetAttribute("ZombieType", typeName)
 	model:SetAttribute("Speed", def.Speed)
@@ -228,7 +233,7 @@ function ZombieService.Spawn(typeName: string, wave: number): Zombie
 	return z
 end
 
-local function kill(z: Zombie, killer: Player?)
+local function kill(z: Zombie)
 	if not z.Alive then
 		return
 	end
@@ -236,7 +241,7 @@ local function kill(z: Zombie, killer: Player?)
 	zombies[z.Id] = nil
 	z.Model:SetAttribute("Dead", true)
 	remotes.ZombieDied:FireAllClients(z.Id, z.Root.Position, z.TypeName)
-	ZombieService.OnKilled(z, killer)
+	ZombieService.OnKilled(z)
 	-- Kurz warten, damit der Client den Aufloese-Effekt zeigen kann
 	task.delay(0.6, function()
 		z.Model:Destroy()
@@ -245,13 +250,19 @@ end
 
 -- Fuegt Schaden zu; gibt true zurueck, wenn der Zombie gestorben ist
 function ZombieService.Damage(z: Zombie, amount: number, owner: Player?, element: string, isCrit: boolean): boolean
-	if not z.Alive then
+	if not z.Alive or amount <= 0 then
 		return false
 	end
+	-- Nur echten Schaden zaehlen (Overkill nicht)
+	local dealt = math.min(amount, z.Health)
 	z.Health -= amount
+	if owner then
+		z.DamageBy[owner] = (z.DamageBy[owner] or 0) + dealt
+		ZombieService.OnDamage(owner, dealt)
+	end
 	remotes.Damage:FireAllClients(z.Id, math.floor(amount + 0.5), element, isCrit)
 	if z.Health <= 0 then
-		kill(z, owner)
+		kill(z)
 		return true
 	end
 	updateHealthBar(z)

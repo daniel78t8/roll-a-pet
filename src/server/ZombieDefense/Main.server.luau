@@ -30,6 +30,12 @@ local wave = 0
 local hutHealth = Config.Hut.MaxHealth
 local spawnsLeft = 0
 
+-- Fairness-Daten pro Spieler (gelten fuer die aktuelle Runde)
+local progress: { [Player]: number } = {} -- selbst geschaffte Wellen
+local runEarned: { [Player]: number } = {} -- in dieser Runde verdiente Coins
+local contributed: { [Player]: boolean } = {} -- hat in dieser Welle Schaden gemacht
+local lastActive = os.clock()
+
 local function setState(state: string)
 	Shared:SetAttribute("State", state)
 end
@@ -61,21 +67,76 @@ local function activePlayers(): { Player }
 	return list
 end
 
+-- Erst nach 5 Sekunden ohne aktive Spieler aufgeben (z.B. beim Respawn)
+local function abandoned(): boolean
+	if #activePlayers() > 0 then
+		lastActive = os.clock()
+		return false
+	end
+	return os.clock() - lastActive > 5
+end
+
 local function broadcast(text: string, kind: string)
 	for _, player in activePlayers() do
 		remotes.Message:FireClient(player, text, kind)
 	end
 end
 
-ZombieService.OnKilled = function(zombie, killer)
+-- Welle, nach der sich die Belohnung des Spielers richtet: seine eigenen
+-- geschafften Wellen + 1 (hoechstens die aktuelle Welle)
+local function personalWave(player: Player): number
+	return math.max(1, math.min(wave, (progress[player] or 0) + 1))
+end
+
+local function updatePlayerHud(player: Player)
+	player:SetAttribute("ZD_RunCoins", runEarned[player] or 0)
+	player:SetAttribute("ZD_RewardPercent", math.floor(Economy.Multiplier(personalWave(player)) * 100 + 0.5))
+end
+
+local function award(player: Player, amount: number): number
+	local gained = Economy.Award(player, amount)
+	if gained > 0 then
+		runEarned[player] = (runEarned[player] or 0) + gained
+		updatePlayerHud(player)
+	end
+	return gained
+end
+
+local function clearPlayer(player: Player)
+	progress[player] = nil
+	runEarned[player] = nil
+	contributed[player] = nil
+	if player.Parent then
+		updatePlayerHud(player)
+	end
+end
+
+ZombieService.OnDamage = function(player)
+	contributed[player] = true
+end
+
+-- Coins werden nach Schaden aufgeteilt
+ZombieService.OnKilled = function(zombie)
 	updateZombiesLeft()
-	if killer and killer.Parent then
-		local gained = Economy.Award(killer, Economy.KillReward(zombie.TypeName, wave))
-		if gained > 0 then
-			remotes.CoinsEarned:FireClient(killer, gained, zombie.Root.Position)
+	local total = 0
+	for _, dealt in zombie.DamageBy do
+		total += dealt
+	end
+	if total <= 0 then
+		return
+	end
+	for player, dealt in zombie.DamageBy do
+		if player.Parent then
+			local reward = Economy.KillReward(zombie.TypeName, personalWave(player)) * (dealt / total)
+			local gained = award(player, reward)
+			if gained > 0 then
+				remotes.CoinsEarned:FireClient(player, gained, zombie.Root.Position)
+			end
 		end
 	end
 end
+
+Players.PlayerRemoving:Connect(clearPlayer)
 
 ZombieService.OnReachedHut = function(zombie)
 	setHut(hutHealth - zombie.HutDamage)
@@ -138,7 +199,7 @@ local function runWave(w: number): string
 			stop = true
 			return "GameOver"
 		end
-		if #activePlayers() == 0 then
+		if abandoned() then
 			stop = true
 			return "Abandoned"
 		end
@@ -155,14 +216,30 @@ local function resetRound()
 	Shared:SetAttribute("Wave", 0)
 	setHut(Config.Hut.MaxHealth)
 	updateZombiesLeft()
+	for _, player in Players:GetPlayers() do
+		clearPlayer(player)
+	end
+end
+
+-- Wer die Map ohne Pets verlaesst, verliert seinen Fortschritt (kein "Parken")
+local function dropInactivePlayers()
+	local active = {}
+	for _, player in activePlayers() do
+		active[player] = true
+	end
+	for player in progress do
+		if not active[player] then
+			clearPlayer(player)
+		end
+	end
 end
 
 resetRound()
 setState("Waiting")
 
 while true do
-	if #activePlayers() == 0 then
-		if wave > 0 then
+	if abandoned() or #activePlayers() == 0 then
+		if wave > 0 and abandoned() then
 			resetRound()
 		end
 		setState("Waiting")
@@ -173,38 +250,56 @@ while true do
 	-- Pause zum Platzieren
 	setState("Intermission")
 	local pause = if wave == 0 then Config.Waves.FirstIntermission else Config.Waves.Intermission
-	local abandoned = false
+	local isAbandoned = false
 	for t = pause, 1, -1 do
 		Shared:SetAttribute("Countdown", t)
 		task.wait(1)
-		if #activePlayers() == 0 then
-			abandoned = true
+		if abandoned() then
+			isAbandoned = true
 			break
 		end
 	end
-	if abandoned then
+	if isAbandoned then
 		continue
 	end
 
 	wave += 1
 	Shared:SetAttribute("Wave", wave)
 	setState("Wave")
+	PetService.Revalidate()
+	dropInactivePlayers()
+	table.clear(contributed)
+	for _, player in activePlayers() do
+		updatePlayerHud(player)
+	end
 	broadcast(("🧟 Welle %d"):format(wave), "Wave")
 
 	local result = runWave(wave)
 	if result == "GameOver" then
 		setState("GameOver")
-		broadcast(("💥 Die Hütte wurde zerstört! Du hast %d Wellen geschafft."):format(wave - 1), "Error")
+		for _, player in activePlayers() do
+			remotes.Message:FireClient(
+				player,
+				("💥 Die Hütte wurde zerstört! %d Wellen geschafft, %d Coins verdient."):format(wave - 1, runEarned[player] or 0),
+				"GameOver"
+			)
+		end
 		ZombieService.ClearAll()
 		task.wait(Config.Waves.GameOverPause)
 		resetRound()
 	elseif result == "Cleared" then
-		local bonus = Economy.WaveBonus(wave)
 		for _, player in activePlayers() do
-			local gained = Economy.Award(player, bonus)
 			local text = ("✅ Welle %d geschafft!"):format(wave)
-			if gained > 0 then
-				text ..= ("  +%d Coins"):format(gained)
+			if contributed[player] then
+				-- Bonus nach eigenem Fortschritt, danach zaehlt die Welle fuer den Spieler
+				local gained = award(player, Economy.WaveBonus(personalWave(player)))
+				progress[player] = (progress[player] or 0) + 1
+				updatePlayerHud(player)
+				if gained > 0 then
+					text ..= ("  +%d Coins"):format(gained)
+				end
+			else
+				text ..= "  (Kein Bonus: deine Pets haben nicht mitgekämpft)"
 			end
 			remotes.Message:FireClient(player, text, "Reward")
 		end

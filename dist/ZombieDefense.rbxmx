@@ -71,6 +71,13 @@ Config.Economy = {
 
 	WaveBonusBase = 1, -- Bonus fuer jede ueberstandene Welle
 	WaveBonusPerWave = 1,
+
+	-- Fairness:
+	-- * Die Belohnung richtet sich nach den Wellen, die DU in dieser Runde
+	--   geschafft hast. Wer bei Welle 45 dazukommt, startet trotzdem bei 10 %.
+	-- * Kill-Coins werden nach Schaden aufgeteilt (kein "Last Hit"-Klauen).
+	-- * Den Wellen-Bonus bekommt nur, wessen Pets in der Welle Schaden gemacht haben.
+	-- Wer die Zombie-Map ohne platzierte Pets verlaesst, verliert seinen Fortschritt.
 }
 
 --------------------------------------------------------------------------
@@ -89,7 +96,11 @@ Config.Waves = {
 	MinSpawnInterval = 0.45,
 	SpawnIntervalDecay = 0.06, -- pro Welle schneller
 
-	HealthGrowthPerWave = 0.18,
+	-- Leben = Basis * (1 + Linear * (Welle-1) + Quadratisch * (Welle-1)^2)
+	-- Getestet per Simulation: 2 Common ~Welle 6, 3 Legendary ~Welle 33,
+	-- 3 Mythic ~Welle 55, 6 Mythic (2 Spieler) ~Welle 90.
+	HealthGrowthPerWave = 0.06,
+	HealthGrowthQuadratic = 0.001,
 	BossEvery = 5, -- jede 5. Welle kommt ein Boss
 }
 
@@ -218,6 +229,47 @@ Config.VFX = {
 	ProjectileSpeed = 70,
 	ShowDamageNumbers = true,
 	MaxActiveProjectiles = 60,
+	MaxViewDistance = 300, -- weiter weg (z.B. in der Lobby) werden keine Effekte gezeigt
+}
+
+--------------------------------------------------------------------------
+-- Sounds. Es sind eingebaute Roblox-Sounds eingetragen, damit es sofort
+-- klingt. Fuer bessere Sounds: im Creator Store (Toolbox -> Audio) einen
+-- Sound suchen, ID kopieren und z.B. Id = "rbxassetid://1234567" eintragen.
+-- Sounds, die nicht laden, werden einfach uebersprungen.
+--------------------------------------------------------------------------
+local SWOOSH = "rbxasset://sounds/swoosh.wav"
+local PING = "rbxasset://sounds/electronicpingshort.wav"
+local THUD = "rbxasset://sounds/action_jump_land.mp3"
+local OOF = "rbxasset://sounds/uuhhh.mp3"
+local GROAN = "rbxasset://sounds/action_get_up.mp3"
+
+Config.Sounds = {
+	Enabled = true,
+	MasterVolume = 1,
+	List = {
+		-- Pets schiessen (je Element)
+		ShootNormal = { Id = SWOOSH, Volume = 0.35, Pitch = 1.5 },
+		ShootFire = { Id = SWOOSH, Volume = 0.45, Pitch = 0.75 },
+		ShootIce = { Id = SWOOSH, Volume = 0.35, Pitch = 2 },
+		ShootLightning = { Id = PING, Volume = 0.4, Pitch = 0.5 },
+		ShootMagic = { Id = PING, Volume = 0.3, Pitch = 1.6 },
+		Hit = { Id = THUD, Volume = 0.4, Pitch = 1.6, MinGap = 0.04 },
+		Crit = { Id = PING, Volume = 0.45, Pitch = 2.2 },
+		-- Zombies
+		ZombieSpawn = { Id = GROAN, Volume = 0.3, Pitch = 0.6, MinGap = 0.3 },
+		ZombieDeath = { Id = OOF, Volume = 0.45, Pitch = 0.75, MinGap = 0.08 },
+		BossDeath = { Id = OOF, Volume = 1, Pitch = 0.4, MinGap = 0 },
+		HutHit = { Id = THUD, Volume = 0.9, Pitch = 0.5, MinGap = 0.1 },
+		-- Spiel und Oberflaeche (2D, ohne Position)
+		PetPlaced = { Id = PING, Volume = 0.5, Pitch = 1 },
+		Coin = { Id = PING, Volume = 0.3, Pitch = 1.8, MinGap = 0.06 },
+		WaveStart = { Id = SWOOSH, Volume = 0.6, Pitch = 0.5 },
+		BossIncoming = { Id = OOF, Volume = 0.8, Pitch = 0.3 },
+		WaveCleared = { Id = PING, Volume = 0.5, Pitch = 1.3 },
+		GameOver = { Id = OOF, Volume = 0.8, Pitch = 0.55 },
+		Click = { Id = PING, Volume = 0.25, Pitch = 2.5 },
+	},
 }
 
 return Config
@@ -1273,17 +1325,130 @@ return PetVFX
 ]]></string>
           </Properties>
         </Item>
+        <Item class="ModuleScript" referent="7">
+          <Properties>
+            <string name="Name">SFX</string>
+            <string name="Source"><![CDATA[-- Sounds fuer den Zombie-Modus (laeuft nur auf dem Client).
+-- Die Sound-IDs stehen in Config.Sounds.
+
+local ContentProvider = game:GetService("ContentProvider")
+local SoundService = game:GetService("SoundService")
+
+local Config = require(script.Parent.Config)
+
+local S = Config.Sounds
+local SFX = {}
+
+local folder = Instance.new("Folder")
+folder.Name = "ZombieDefenseSFX"
+folder.Parent = SoundService
+
+local templates: { [string]: Sound } = {}
+local failed: { [string]: boolean } = {}
+local lastPlayed: { [string]: number } = {}
+local playing: { [string]: number } = {}
+
+for name, def in S.List do
+	if def.Id and def.Id ~= "" then
+		local sound = Instance.new("Sound")
+		sound.Name = name
+		sound.SoundId = def.Id
+		sound.Volume = def.Volume or 0.5
+		sound.Parent = folder
+		templates[name] = sound
+	end
+end
+
+-- Sounds vorladen; was nicht laedt, wird spaeter einfach uebersprungen
+task.spawn(function()
+	local list = {}
+	for _, sound in templates do
+		table.insert(list, sound)
+	end
+	pcall(function()
+		ContentProvider:PreloadAsync(list, function(assetId, status)
+			if status ~= Enum.AssetFetchStatus.Success then
+				for name, sound in templates do
+					if sound.SoundId == assetId then
+						failed[name] = true
+					end
+				end
+			end
+		end)
+	end)
+end)
+
+-- Spielt einen Sound. Mit position = 3D-Sound an dieser Stelle, sonst 2D.
+function SFX.Play(name: string, position: Vector3?, pitch: number?)
+	if not S.Enabled then
+		return
+	end
+	local def = S.List[name]
+	local template = templates[name]
+	if not def or not template or failed[name] then
+		return
+	end
+
+	-- Nicht zu oft und nicht zu viele gleichzeitig (sonst wird es zu laut)
+	local now = os.clock()
+	if lastPlayed[name] and now - lastPlayed[name] < (def.MinGap or 0.05) then
+		return
+	end
+	if (playing[name] or 0) >= (def.MaxConcurrent or 6) then
+		return
+	end
+	lastPlayed[name] = now
+	playing[name] = (playing[name] or 0) + 1
+
+	local sound = template:Clone()
+	local variation = def.PitchVariation or 0.08
+	sound.PlaybackSpeed = (def.Pitch or 1) * (pitch or 1) * (1 + (math.random() * 2 - 1) * variation)
+	sound.Volume = (def.Volume or 0.5) * S.MasterVolume
+
+	local holder: Instance = sound
+	if position then
+		local attachment = Instance.new("Attachment")
+		attachment.WorldPosition = position
+		attachment.Parent = workspace.Terrain
+		sound.RollOffMode = Enum.RollOffMode.InverseTapered
+		sound.RollOffMinDistance = 12
+		sound.RollOffMaxDistance = def.MaxDistance or 160
+		sound.Parent = attachment
+		holder = attachment
+	else
+		sound.Parent = folder
+	end
+
+	local done = false
+	local function cleanup()
+		if done then
+			return
+		end
+		done = true
+		playing[name] = math.max((playing[name] or 1) - 1, 0)
+		holder:Destroy()
+	end
+	sound.Ended:Once(cleanup)
+	-- Sicherheitsnetz, falls Ended nie kommt
+	task.delay(6, cleanup)
+	sound:Play()
+end
+
+return SFX
+]]></string>
+          </Properties>
+        </Item>
       </Item>
     </Item>
-    <Item class="Folder" referent="7">
+    <Item class="Folder" referent="8">
       <Properties>
         <string name="Name">2_in_ServerScriptService</string>
       </Properties>
-      <Item class="Folder" referent="8">
+      <Item class="Folder" referent="9">
         <Properties>
           <string name="Name">ZombieDefense</string>
         </Properties>
-        <Item class="ModuleScript" referent="9">
+        <Item class="ModuleScript" referent="10">
           <Properties>
             <string name="Name">Economy</string>
             <string name="Source"><![CDATA[-- Geld im Zombie-Modus. Am Anfang gibt es bewusst wenig, damit man nicht
@@ -1392,7 +1557,7 @@ return Economy
 ]]></string>
           </Properties>
         </Item>
-        <Item class="Script" referent="10">
+        <Item class="Script" referent="11">
           <Properties>
             <string name="Name">Main</string>
             <token name="RunContext">0</token>
@@ -1428,6 +1593,12 @@ local wave = 0
 local hutHealth = Config.Hut.MaxHealth
 local spawnsLeft = 0
 
+-- Fairness-Daten pro Spieler (gelten fuer die aktuelle Runde)
+local progress: { [Player]: number } = {} -- selbst geschaffte Wellen
+local runEarned: { [Player]: number } = {} -- in dieser Runde verdiente Coins
+local contributed: { [Player]: boolean } = {} -- hat in dieser Welle Schaden gemacht
+local lastActive = os.clock()
+
 local function setState(state: string)
 	Shared:SetAttribute("State", state)
 end
@@ -1459,21 +1630,76 @@ local function activePlayers(): { Player }
 	return list
 end
 
+-- Erst nach 5 Sekunden ohne aktive Spieler aufgeben (z.B. beim Respawn)
+local function abandoned(): boolean
+	if #activePlayers() > 0 then
+		lastActive = os.clock()
+		return false
+	end
+	return os.clock() - lastActive > 5
+end
+
 local function broadcast(text: string, kind: string)
 	for _, player in activePlayers() do
 		remotes.Message:FireClient(player, text, kind)
 	end
 end
 
-ZombieService.OnKilled = function(zombie, killer)
+-- Welle, nach der sich die Belohnung des Spielers richtet: seine eigenen
+-- geschafften Wellen + 1 (hoechstens die aktuelle Welle)
+local function personalWave(player: Player): number
+	return math.max(1, math.min(wave, (progress[player] or 0) + 1))
+end
+
+local function updatePlayerHud(player: Player)
+	player:SetAttribute("ZD_RunCoins", runEarned[player] or 0)
+	player:SetAttribute("ZD_RewardPercent", math.floor(Economy.Multiplier(personalWave(player)) * 100 + 0.5))
+end
+
+local function award(player: Player, amount: number): number
+	local gained = Economy.Award(player, amount)
+	if gained > 0 then
+		runEarned[player] = (runEarned[player] or 0) + gained
+		updatePlayerHud(player)
+	end
+	return gained
+end
+
+local function clearPlayer(player: Player)
+	progress[player] = nil
+	runEarned[player] = nil
+	contributed[player] = nil
+	if player.Parent then
+		updatePlayerHud(player)
+	end
+end
+
+ZombieService.OnDamage = function(player)
+	contributed[player] = true
+end
+
+-- Coins werden nach Schaden aufgeteilt
+ZombieService.OnKilled = function(zombie)
 	updateZombiesLeft()
-	if killer and killer.Parent then
-		local gained = Economy.Award(killer, Economy.KillReward(zombie.TypeName, wave))
-		if gained > 0 then
-			remotes.CoinsEarned:FireClient(killer, gained, zombie.Root.Position)
+	local total = 0
+	for _, dealt in zombie.DamageBy do
+		total += dealt
+	end
+	if total <= 0 then
+		return
+	end
+	for player, dealt in zombie.DamageBy do
+		if player.Parent then
+			local reward = Economy.KillReward(zombie.TypeName, personalWave(player)) * (dealt / total)
+			local gained = award(player, reward)
+			if gained > 0 then
+				remotes.CoinsEarned:FireClient(player, gained, zombie.Root.Position)
+			end
 		end
 	end
 end
+
+Players.PlayerRemoving:Connect(clearPlayer)
 
 ZombieService.OnReachedHut = function(zombie)
 	setHut(hutHealth - zombie.HutDamage)
@@ -1536,7 +1762,7 @@ local function runWave(w: number): string
 			stop = true
 			return "GameOver"
 		end
-		if #activePlayers() == 0 then
+		if abandoned() then
 			stop = true
 			return "Abandoned"
 		end
@@ -1553,14 +1779,30 @@ local function resetRound()
 	Shared:SetAttribute("Wave", 0)
 	setHut(Config.Hut.MaxHealth)
 	updateZombiesLeft()
+	for _, player in Players:GetPlayers() do
+		clearPlayer(player)
+	end
+end
+
+-- Wer die Map ohne Pets verlaesst, verliert seinen Fortschritt (kein "Parken")
+local function dropInactivePlayers()
+	local active = {}
+	for _, player in activePlayers() do
+		active[player] = true
+	end
+	for player in progress do
+		if not active[player] then
+			clearPlayer(player)
+		end
+	end
 end
 
 resetRound()
 setState("Waiting")
 
 while true do
-	if #activePlayers() == 0 then
-		if wave > 0 then
+	if abandoned() or #activePlayers() == 0 then
+		if wave > 0 and abandoned() then
 			resetRound()
 		end
 		setState("Waiting")
@@ -1571,38 +1813,56 @@ while true do
 	-- Pause zum Platzieren
 	setState("Intermission")
 	local pause = if wave == 0 then Config.Waves.FirstIntermission else Config.Waves.Intermission
-	local abandoned = false
+	local isAbandoned = false
 	for t = pause, 1, -1 do
 		Shared:SetAttribute("Countdown", t)
 		task.wait(1)
-		if #activePlayers() == 0 then
-			abandoned = true
+		if abandoned() then
+			isAbandoned = true
 			break
 		end
 	end
-	if abandoned then
+	if isAbandoned then
 		continue
 	end
 
 	wave += 1
 	Shared:SetAttribute("Wave", wave)
 	setState("Wave")
+	PetService.Revalidate()
+	dropInactivePlayers()
+	table.clear(contributed)
+	for _, player in activePlayers() do
+		updatePlayerHud(player)
+	end
 	broadcast(("🧟 Welle %d"):format(wave), "Wave")
 
 	local result = runWave(wave)
 	if result == "GameOver" then
 		setState("GameOver")
-		broadcast(("💥 Die Hütte wurde zerstört! Du hast %d Wellen geschafft."):format(wave - 1), "Error")
+		for _, player in activePlayers() do
+			remotes.Message:FireClient(
+				player,
+				("💥 Die Hütte wurde zerstört! %d Wellen geschafft, %d Coins verdient."):format(wave - 1, runEarned[player] or 0),
+				"GameOver"
+			)
+		end
 		ZombieService.ClearAll()
 		task.wait(Config.Waves.GameOverPause)
 		resetRound()
 	elseif result == "Cleared" then
-		local bonus = Economy.WaveBonus(wave)
 		for _, player in activePlayers() do
-			local gained = Economy.Award(player, bonus)
 			local text = ("✅ Welle %d geschafft!"):format(wave)
-			if gained > 0 then
-				text ..= ("  +%d Coins"):format(gained)
+			if contributed[player] then
+				-- Bonus nach eigenem Fortschritt, danach zaehlt die Welle fuer den Spieler
+				local gained = award(player, Economy.WaveBonus(personalWave(player)))
+				progress[player] = (progress[player] or 0) + 1
+				updatePlayerHud(player)
+				if gained > 0 then
+					text ..= ("  +%d Coins"):format(gained)
+				end
+			else
+				text ..= "  (Kein Bonus: deine Pets haben nicht mitgekämpft)"
 			end
 			remotes.Message:FireClient(player, text, "Reward")
 		end
@@ -1614,7 +1874,7 @@ end
 ]]></string>
           </Properties>
         </Item>
-        <Item class="ModuleScript" referent="11">
+        <Item class="ModuleScript" referent="12">
           <Properties>
             <string name="Name">MapBuilder</string>
             <string name="Source"><![CDATA[-- Baut die Zombie-Map nach der Skizze:
@@ -2099,7 +2359,7 @@ return MapBuilder
 ]]></string>
           </Properties>
         </Item>
-        <Item class="ModuleScript" referent="12">
+        <Item class="ModuleScript" referent="13">
           <Properties>
             <string name="Name">PetInventory</string>
             <string name="Source"><![CDATA[-- Verbindung zu deinem Pet-System.
@@ -2153,7 +2413,7 @@ return PetInventory
 ]]></string>
           </Properties>
         </Item>
-        <Item class="ModuleScript" referent="13">
+        <Item class="ModuleScript" referent="14">
           <Properties>
             <string name="Name">PetService</string>
             <string name="Source"><![CDATA[-- Pets auf den Rand-Plaetzen: platzieren, entfernen, angreifen.
@@ -2304,6 +2564,7 @@ local function place(player: Player, slotId: string, petName: string)
 	model:PivotTo(CFrame.lookAt(center, facing) * pivotToCenter:Inverse())
 
 	model.Name = "Pet_" .. slotId
+	model.ModelStreamingMode = Enum.ModelStreamingMode.Atomic -- immer komplett laden
 	model:SetAttribute("SlotId", slotId)
 	model:SetAttribute("PetName", petName)
 	model:SetAttribute("Rarity", info.Rarity)
@@ -2520,11 +2781,27 @@ function PetService.HasPets(player: Player): boolean
 	return countPlaced(player) > 0
 end
 
+-- Entfernt Pets, die der Spieler inzwischen nicht mehr besitzt (z.B. verkauft)
+function PetService.Revalidate()
+	for slotId, p in placed do
+		local owned = 0
+		for _, name in PetInventory.GetPets(p.Owner) do
+			if name == p.Info.Name then
+				owned += 1
+			end
+		end
+		if countPlaced(p.Owner, p.Info.Name) > owned then
+			remove(slotId)
+			message(p.Owner, ("%s wurde entfernt, weil du es nicht mehr hast."):format(p.Info.Name), "Error")
+		end
+	end
+end
+
 return PetService
 ]]></string>
           </Properties>
         </Item>
-        <Item class="ModuleScript" referent="14">
+        <Item class="ModuleScript" referent="15">
           <Properties>
             <string name="Name">ZombieService</string>
             <string name="Source"><![CDATA[-- Zombies: bauen, laufen lassen, Schaden, Brennen/Verlangsamen.
@@ -2553,6 +2830,7 @@ export type Zombie = {
 	BurnUntil: number,
 	BurnDps: number,
 	BurnOwner: Player?,
+	DamageBy: { [Player]: number }, -- fuer faire Aufteilung der Coins
 	Alive: boolean,
 }
 
@@ -2565,8 +2843,9 @@ local nextId = 0
 local pathLength = (Layout.ZombieEnd - Layout.ZombieStart).Magnitude
 
 -- Wird vom Hauptskript gesetzt
-ZombieService.OnKilled = function(_zombie: Zombie, _killer: Player?) end
+ZombieService.OnKilled = function(_zombie: Zombie) end
 ZombieService.OnReachedHut = function(_zombie: Zombie) end
+ZombieService.OnDamage = function(_player: Player, _amount: number) end
 
 local function weld(a: BasePart, b: BasePart, name: string, c0: CFrame, c1: CFrame): Motor6D
 	local m = Instance.new("Motor6D")
@@ -2720,7 +2999,8 @@ function ZombieService.Spawn(typeName: string, wave: number): Zombie
 	local def = Config.ZombieTypes[typeName]
 	nextId += 1
 	local model, root, fill = buildModel(typeName, def)
-	local healthMult = 1 + (wave - 1) * Config.Waves.HealthGrowthPerWave
+	local w = wave - 1
+	local healthMult = 1 + w * Config.Waves.HealthGrowthPerWave + w * w * (Config.Waves.HealthGrowthQuadratic or 0)
 	local maxHealth = math.floor(def.Health * healthMult + 0.5)
 
 	local z: Zombie = {
@@ -2741,6 +3021,7 @@ function ZombieService.Spawn(typeName: string, wave: number): Zombie
 		BurnUntil = 0,
 		BurnDps = 0,
 		BurnOwner = nil,
+		DamageBy = {},
 		Alive = true,
 	}
 
@@ -2748,6 +3029,7 @@ function ZombieService.Spawn(typeName: string, wave: number): Zombie
 		model:ScaleTo(def.Scale)
 	end
 	model.Name = "Z" .. z.Id
+	model.ModelStreamingMode = Enum.ModelStreamingMode.Atomic -- immer komplett laden
 	model:SetAttribute("ZombieId", z.Id)
 	model:SetAttribute("ZombieType", typeName)
 	model:SetAttribute("Speed", def.Speed)
@@ -2757,7 +3039,7 @@ function ZombieService.Spawn(typeName: string, wave: number): Zombie
 	return z
 end
 
-local function kill(z: Zombie, killer: Player?)
+local function kill(z: Zombie)
 	if not z.Alive then
 		return
 	end
@@ -2765,7 +3047,7 @@ local function kill(z: Zombie, killer: Player?)
 	zombies[z.Id] = nil
 	z.Model:SetAttribute("Dead", true)
 	remotes.ZombieDied:FireAllClients(z.Id, z.Root.Position, z.TypeName)
-	ZombieService.OnKilled(z, killer)
+	ZombieService.OnKilled(z)
 	-- Kurz warten, damit der Client den Aufloese-Effekt zeigen kann
 	task.delay(0.6, function()
 		z.Model:Destroy()
@@ -2774,13 +3056,19 @@ end
 
 -- Fuegt Schaden zu; gibt true zurueck, wenn der Zombie gestorben ist
 function ZombieService.Damage(z: Zombie, amount: number, owner: Player?, element: string, isCrit: boolean): boolean
-	if not z.Alive then
+	if not z.Alive or amount <= 0 then
 		return false
 	end
+	-- Nur echten Schaden zaehlen (Overkill nicht)
+	local dealt = math.min(amount, z.Health)
 	z.Health -= amount
+	if owner then
+		z.DamageBy[owner] = (z.DamageBy[owner] or 0) + dealt
+		ZombieService.OnDamage(owner, dealt)
+	end
 	remotes.Damage:FireAllClients(z.Id, math.floor(amount + 0.5), element, isCrit)
 	if z.Health <= 0 then
-		kill(z, owner)
+		kill(z)
 		return true
 	end
 	updateHealthBar(z)
@@ -2881,11 +3169,11 @@ return ZombieService
         </Item>
       </Item>
     </Item>
-    <Item class="Folder" referent="15">
+    <Item class="Folder" referent="16">
       <Properties>
         <string name="Name">3_in_StarterPlayerScripts</string>
       </Properties>
-      <Item class="LocalScript" referent="16">
+      <Item class="LocalScript" referent="17">
         <Properties>
           <string name="Name">ZombieDefenseClient</string>
           <string name="Source"><![CDATA[-- Zombie-Modus: Client (Anzeige, Pet-Auswahl, Animationen, Effekte).
@@ -2900,6 +3188,7 @@ local Shared = ReplicatedStorage:WaitForChild("ZombieDefense")
 local Config = require(Shared:WaitForChild("Config"))
 local Layout = require(Shared:WaitForChild("Layout"))
 local PetVFX = require(Shared:WaitForChild("PetVFX"))
+local SFX = require(Shared:WaitForChild("SFX"))
 local Remotes = Shared:WaitForChild("Remotes")
 
 local map = workspace:WaitForChild("ZombieDefenseMap")
@@ -2914,6 +3203,13 @@ end
 
 local ELEMENT_ICON = { Normal = "⭐", Fire = "🔥", Ice = "❄️", Lightning = "⚡", Magic = "✨" }
 local ELEMENT_NAME = { Normal = "Normal", Fire = "Feuer", Ice = "Eis", Lightning = "Blitz", Magic = "Magie" }
+
+-- Effekte nur zeigen, wenn die Kamera in der Naehe der Zombie-Map ist
+-- (spart Leistung fuer Spieler in der Lobby)
+local function watching(): boolean
+	local camera = workspace.CurrentCamera
+	return camera ~= nil and (camera.CFrame.Position - Layout.Origin).Magnitude <= Config.VFX.MaxViewDistance
+end
 
 --------------------------------------------------------------------------
 -- Zombies
@@ -2940,13 +3236,23 @@ local function onZombieAdded(model: Instance)
 			return
 		end
 		zombieVisuals[id] = visual
-		PetVFX.ZombieAppear(model:GetPivot().Position)
+		if watching() then
+			PetVFX.ZombieAppear(model:GetPivot().Position)
+			SFX.Play("ZombieSpawn", model:GetPivot().Position)
+		end
 		model:GetAttributeChangedSignal("Slowed"):Connect(function()
 			visual.SetSlowed(model:GetAttribute("Slowed") == true)
 		end)
 		model:GetAttributeChangedSignal("Burning"):Connect(function()
 			visual.SetBurning(model:GetAttribute("Burning") == true)
 		end)
+		-- Zustand uebernehmen, falls der Zombie schon verlangsamt/brennend ist
+		if model:GetAttribute("Slowed") == true then
+			visual.SetSlowed(true)
+		end
+		if model:GetAttribute("Burning") == true then
+			visual.SetBurning(true)
+		end
 	end)
 end
 
@@ -3044,7 +3350,10 @@ local function onPetAdded(model: Instance)
 	}
 	pets[slotId] = entry
 	addNameTag(model)
-	PetVFX.Spawn(model, padPosition)
+	if watching() then
+		PetVFX.Spawn(model, padPosition)
+		SFX.Play("PetPlaced", padPosition)
+	end
 end
 
 petFolder.ChildAdded:Connect(onPetAdded)
@@ -3104,6 +3413,9 @@ end)
 --------------------------------------------------------------------------
 
 Remotes.Attack.OnClientEvent:Connect(function(data)
+	if not watching() then
+		return
+	end
 	local entry = pets[data.SlotId]
 	if entry then
 		local dir = Vector3.new(data.To.X - entry.BasePosition.X, 0, data.To.Z - entry.BasePosition.Z)
@@ -3118,9 +3430,16 @@ Remotes.Attack.OnClientEvent:Connect(function(data)
 		local root = zombieRoot(targetId)
 		return if root then root.Position else nil
 	end)
+	SFX.Play("Shoot" .. tostring(data.Element), data.From)
+	task.delay(data.Travel, function()
+		SFX.Play(if data.Crit then "Crit" else "Hit", data.To)
+	end)
 end)
 
 Remotes.Damage.OnClientEvent:Connect(function(id, amount, element, isCrit)
+	if not watching() then
+		return
+	end
 	local visual = zombieVisuals[id]
 	if visual then
 		visual.Flash()
@@ -3131,19 +3450,27 @@ Remotes.Damage.OnClientEvent:Connect(function(id, amount, element, isCrit)
 	end
 end)
 
-Remotes.ZombieDied.OnClientEvent:Connect(function(id)
+Remotes.ZombieDied.OnClientEvent:Connect(function(id, position, typeName)
 	local visual = zombieVisuals[id]
 	if visual then
 		visual.Die()
+	end
+	if watching() then
+		SFX.Play(if typeName == "Boss" then "BossDeath" else "ZombieDeath", position)
 	end
 end)
 
 Remotes.CoinsEarned.OnClientEvent:Connect(function(amount, position)
 	PetVFX.CoinPop(position, amount)
+	SFX.Play("Coin")
 end)
 
 Remotes.HutHit.OnClientEvent:Connect(function(position, damage)
+	if not watching() then
+		return
+	end
 	PetVFX.HutHit(position, damage)
+	SFX.Play("HutHit", position)
 	local character = player.Character
 	local root = character and character:FindFirstChild("HumanoidRootPart") :: BasePart?
 	if root and (root.Position - position).Magnitude < 120 then
@@ -3193,7 +3520,7 @@ end
 local panel = Instance.new("Frame")
 panel.AnchorPoint = Vector2.new(0.5, 0)
 panel.Position = UDim2.new(0.5, 0, 0, 8)
-panel.Size = UDim2.fromOffset(320, 86)
+panel.Size = UDim2.fromOffset(320, 108)
 panel.BackgroundColor3 = Color3.fromRGB(25, 30, 25)
 panel.BackgroundTransparency = 0.15
 panel.Visible = false
@@ -3216,6 +3543,18 @@ hutFill.BackgroundColor3 = Color3.fromRGB(90, 220, 90)
 hutFill.Parent = hutBack
 corner(hutFill, 8)
 local hutText = label(hutBack, { Size = UDim2.fromScale(1, 1), ZIndex = 2, Font = Enum.Font.GothamBold, Text = "🏠" })
+local coinsLabel = label(panel, { Position = UDim2.fromOffset(12, 84), Size = UDim2.new(1, -24, 0, 18), Font = Enum.Font.GothamBold, TextColor3 = Color3.fromRGB(255, 215, 60), Text = "" })
+
+-- Eigene Coins dieser Runde und aktueller Belohnungs-Anteil
+local function refreshCoins()
+	coinsLabel.Text = ("💰 Diese Runde: %d   ·   Belohnung: %d %%"):format(
+		player:GetAttribute("ZD_RunCoins") or 0,
+		player:GetAttribute("ZD_RewardPercent") or math.floor(Config.Economy.EarlyGameMultiplier * 100 + 0.5)
+	)
+end
+player:GetAttributeChangedSignal("ZD_RunCoins"):Connect(refreshCoins)
+player:GetAttributeChangedSignal("ZD_RewardPercent"):Connect(refreshCoins)
+refreshCoins()
 
 local function refreshHud()
 	local state = Shared:GetAttribute("State")
@@ -3262,7 +3601,9 @@ local BANNER_COLORS = {
 	Boss = Color3.fromRGB(210, 120, 255),
 	Reward = Color3.fromRGB(255, 215, 60),
 	Error = Color3.fromRGB(255, 100, 80),
+	GameOver = Color3.fromRGB(255, 100, 80),
 }
+local BANNER_SOUNDS = { Wave = "WaveStart", Boss = "BossIncoming", Reward = "WaveCleared", GameOver = "GameOver" }
 local bannerToken = 0
 local banner = label(gui, {
 	AnchorPoint = Vector2.new(0.5, 0.5),
@@ -3278,13 +3619,17 @@ bannerScale.Parent = banner
 Remotes.Message.OnClientEvent:Connect(function(text: string, kind: string)
 	bannerToken += 1
 	local token = bannerToken
+	local sound = BANNER_SOUNDS[kind]
+	if sound then
+		SFX.Play(sound)
+	end
 	banner.Text = text
 	banner.TextColor3 = BANNER_COLORS[kind] or BANNER_COLORS.Info
 	banner.TextTransparency = 0
 	banner.TextStrokeTransparency = 0
 	bannerScale.Scale = 0.4
 	TweenService:Create(bannerScale, TweenInfo.new(0.3, Enum.EasingStyle.Back), { Scale = 1 }):Play()
-	task.delay(if kind == "Error" then 2 else 2.5, function()
+	task.delay(if kind == "Error" then 2 elseif kind == "GameOver" then 5 else 2.5, function()
 		if token == bannerToken then
 			TweenService:Create(banner, TweenInfo.new(0.5), { TextTransparency = 1, TextStrokeTransparency = 1 }):Play()
 		end
@@ -3338,6 +3683,7 @@ layout.SortOrder = Enum.SortOrder.LayoutOrder
 layout.Parent = list
 
 closeButton.Activated:Connect(function()
+	SFX.Play("Click")
 	picker.Visible = false
 end)
 
@@ -3369,6 +3715,7 @@ local function makeButton(text: string, color: Color3, order: number): TextButto
 end
 
 Remotes.OpenPicker.OnClientEvent:Connect(function(slotId: string, options, meta)
+	SFX.Play("Click")
 	clearList()
 	picker.Visible = true
 	pickerSub.Text = ("Platziert: %d / %d  ·  Nur am Rand erlaubt"):format(meta.Placed, meta.Max)
@@ -3377,6 +3724,7 @@ Remotes.OpenPicker.OnClientEvent:Connect(function(slotId: string, options, meta)
 		pickerTitle.Text = ("Dein Pet: %s"):format(tostring(meta.PlacedPet))
 		local remove = makeButton("🗑️ Pet entfernen", Color3.fromRGB(190, 60, 60), 0)
 		remove.Activated:Connect(function()
+			SFX.Play("Click")
 			Remotes.RemovePet:FireServer(slotId)
 			picker.Visible = false
 		end)
@@ -3430,6 +3778,7 @@ Remotes.OpenPicker.OnClientEvent:Connect(function(slotId: string, options, meta)
 			row.BackgroundColor3 = Color3.fromRGB(35, 37, 45)
 		else
 			row.Activated:Connect(function()
+				SFX.Play("Click")
 				Remotes.PlacePet:FireServer(slotId, opt.Name)
 				picker.Visible = false
 			end)

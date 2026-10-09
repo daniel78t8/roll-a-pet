@@ -10,6 +10,7 @@ local Shared = ReplicatedStorage:WaitForChild("ZombieDefense")
 local Config = require(Shared:WaitForChild("Config"))
 local Layout = require(Shared:WaitForChild("Layout"))
 local PetVFX = require(Shared:WaitForChild("PetVFX"))
+local SFX = require(Shared:WaitForChild("SFX"))
 local Remotes = Shared:WaitForChild("Remotes")
 
 local map = workspace:WaitForChild("ZombieDefenseMap")
@@ -24,6 +25,13 @@ end
 
 local ELEMENT_ICON = { Normal = "⭐", Fire = "🔥", Ice = "❄️", Lightning = "⚡", Magic = "✨" }
 local ELEMENT_NAME = { Normal = "Normal", Fire = "Feuer", Ice = "Eis", Lightning = "Blitz", Magic = "Magie" }
+
+-- Effekte nur zeigen, wenn die Kamera in der Naehe der Zombie-Map ist
+-- (spart Leistung fuer Spieler in der Lobby)
+local function watching(): boolean
+	local camera = workspace.CurrentCamera
+	return camera ~= nil and (camera.CFrame.Position - Layout.Origin).Magnitude <= Config.VFX.MaxViewDistance
+end
 
 --------------------------------------------------------------------------
 -- Zombies
@@ -50,13 +58,23 @@ local function onZombieAdded(model: Instance)
 			return
 		end
 		zombieVisuals[id] = visual
-		PetVFX.ZombieAppear(model:GetPivot().Position)
+		if watching() then
+			PetVFX.ZombieAppear(model:GetPivot().Position)
+			SFX.Play("ZombieSpawn", model:GetPivot().Position)
+		end
 		model:GetAttributeChangedSignal("Slowed"):Connect(function()
 			visual.SetSlowed(model:GetAttribute("Slowed") == true)
 		end)
 		model:GetAttributeChangedSignal("Burning"):Connect(function()
 			visual.SetBurning(model:GetAttribute("Burning") == true)
 		end)
+		-- Zustand uebernehmen, falls der Zombie schon verlangsamt/brennend ist
+		if model:GetAttribute("Slowed") == true then
+			visual.SetSlowed(true)
+		end
+		if model:GetAttribute("Burning") == true then
+			visual.SetBurning(true)
+		end
 	end)
 end
 
@@ -154,7 +172,10 @@ local function onPetAdded(model: Instance)
 	}
 	pets[slotId] = entry
 	addNameTag(model)
-	PetVFX.Spawn(model, padPosition)
+	if watching() then
+		PetVFX.Spawn(model, padPosition)
+		SFX.Play("PetPlaced", padPosition)
+	end
 end
 
 petFolder.ChildAdded:Connect(onPetAdded)
@@ -214,6 +235,9 @@ end)
 --------------------------------------------------------------------------
 
 Remotes.Attack.OnClientEvent:Connect(function(data)
+	if not watching() then
+		return
+	end
 	local entry = pets[data.SlotId]
 	if entry then
 		local dir = Vector3.new(data.To.X - entry.BasePosition.X, 0, data.To.Z - entry.BasePosition.Z)
@@ -228,9 +252,16 @@ Remotes.Attack.OnClientEvent:Connect(function(data)
 		local root = zombieRoot(targetId)
 		return if root then root.Position else nil
 	end)
+	SFX.Play("Shoot" .. tostring(data.Element), data.From)
+	task.delay(data.Travel, function()
+		SFX.Play(if data.Crit then "Crit" else "Hit", data.To)
+	end)
 end)
 
 Remotes.Damage.OnClientEvent:Connect(function(id, amount, element, isCrit)
+	if not watching() then
+		return
+	end
 	local visual = zombieVisuals[id]
 	if visual then
 		visual.Flash()
@@ -241,19 +272,27 @@ Remotes.Damage.OnClientEvent:Connect(function(id, amount, element, isCrit)
 	end
 end)
 
-Remotes.ZombieDied.OnClientEvent:Connect(function(id)
+Remotes.ZombieDied.OnClientEvent:Connect(function(id, position, typeName)
 	local visual = zombieVisuals[id]
 	if visual then
 		visual.Die()
+	end
+	if watching() then
+		SFX.Play(if typeName == "Boss" then "BossDeath" else "ZombieDeath", position)
 	end
 end)
 
 Remotes.CoinsEarned.OnClientEvent:Connect(function(amount, position)
 	PetVFX.CoinPop(position, amount)
+	SFX.Play("Coin")
 end)
 
 Remotes.HutHit.OnClientEvent:Connect(function(position, damage)
+	if not watching() then
+		return
+	end
 	PetVFX.HutHit(position, damage)
+	SFX.Play("HutHit", position)
 	local character = player.Character
 	local root = character and character:FindFirstChild("HumanoidRootPart") :: BasePart?
 	if root and (root.Position - position).Magnitude < 120 then
@@ -303,7 +342,7 @@ end
 local panel = Instance.new("Frame")
 panel.AnchorPoint = Vector2.new(0.5, 0)
 panel.Position = UDim2.new(0.5, 0, 0, 8)
-panel.Size = UDim2.fromOffset(320, 86)
+panel.Size = UDim2.fromOffset(320, 108)
 panel.BackgroundColor3 = Color3.fromRGB(25, 30, 25)
 panel.BackgroundTransparency = 0.15
 panel.Visible = false
@@ -326,6 +365,18 @@ hutFill.BackgroundColor3 = Color3.fromRGB(90, 220, 90)
 hutFill.Parent = hutBack
 corner(hutFill, 8)
 local hutText = label(hutBack, { Size = UDim2.fromScale(1, 1), ZIndex = 2, Font = Enum.Font.GothamBold, Text = "🏠" })
+local coinsLabel = label(panel, { Position = UDim2.fromOffset(12, 84), Size = UDim2.new(1, -24, 0, 18), Font = Enum.Font.GothamBold, TextColor3 = Color3.fromRGB(255, 215, 60), Text = "" })
+
+-- Eigene Coins dieser Runde und aktueller Belohnungs-Anteil
+local function refreshCoins()
+	coinsLabel.Text = ("💰 Diese Runde: %d   ·   Belohnung: %d %%"):format(
+		player:GetAttribute("ZD_RunCoins") or 0,
+		player:GetAttribute("ZD_RewardPercent") or math.floor(Config.Economy.EarlyGameMultiplier * 100 + 0.5)
+	)
+end
+player:GetAttributeChangedSignal("ZD_RunCoins"):Connect(refreshCoins)
+player:GetAttributeChangedSignal("ZD_RewardPercent"):Connect(refreshCoins)
+refreshCoins()
 
 local function refreshHud()
 	local state = Shared:GetAttribute("State")
@@ -372,7 +423,9 @@ local BANNER_COLORS = {
 	Boss = Color3.fromRGB(210, 120, 255),
 	Reward = Color3.fromRGB(255, 215, 60),
 	Error = Color3.fromRGB(255, 100, 80),
+	GameOver = Color3.fromRGB(255, 100, 80),
 }
+local BANNER_SOUNDS = { Wave = "WaveStart", Boss = "BossIncoming", Reward = "WaveCleared", GameOver = "GameOver" }
 local bannerToken = 0
 local banner = label(gui, {
 	AnchorPoint = Vector2.new(0.5, 0.5),
@@ -388,13 +441,17 @@ bannerScale.Parent = banner
 Remotes.Message.OnClientEvent:Connect(function(text: string, kind: string)
 	bannerToken += 1
 	local token = bannerToken
+	local sound = BANNER_SOUNDS[kind]
+	if sound then
+		SFX.Play(sound)
+	end
 	banner.Text = text
 	banner.TextColor3 = BANNER_COLORS[kind] or BANNER_COLORS.Info
 	banner.TextTransparency = 0
 	banner.TextStrokeTransparency = 0
 	bannerScale.Scale = 0.4
 	TweenService:Create(bannerScale, TweenInfo.new(0.3, Enum.EasingStyle.Back), { Scale = 1 }):Play()
-	task.delay(if kind == "Error" then 2 else 2.5, function()
+	task.delay(if kind == "Error" then 2 elseif kind == "GameOver" then 5 else 2.5, function()
 		if token == bannerToken then
 			TweenService:Create(banner, TweenInfo.new(0.5), { TextTransparency = 1, TextStrokeTransparency = 1 }):Play()
 		end
@@ -448,6 +505,7 @@ layout.SortOrder = Enum.SortOrder.LayoutOrder
 layout.Parent = list
 
 closeButton.Activated:Connect(function()
+	SFX.Play("Click")
 	picker.Visible = false
 end)
 
@@ -479,6 +537,7 @@ local function makeButton(text: string, color: Color3, order: number): TextButto
 end
 
 Remotes.OpenPicker.OnClientEvent:Connect(function(slotId: string, options, meta)
+	SFX.Play("Click")
 	clearList()
 	picker.Visible = true
 	pickerSub.Text = ("Platziert: %d / %d  ·  Nur am Rand erlaubt"):format(meta.Placed, meta.Max)
@@ -487,6 +546,7 @@ Remotes.OpenPicker.OnClientEvent:Connect(function(slotId: string, options, meta)
 		pickerTitle.Text = ("Dein Pet: %s"):format(tostring(meta.PlacedPet))
 		local remove = makeButton("🗑️ Pet entfernen", Color3.fromRGB(190, 60, 60), 0)
 		remove.Activated:Connect(function()
+			SFX.Play("Click")
 			Remotes.RemovePet:FireServer(slotId)
 			picker.Visible = false
 		end)
@@ -540,6 +600,7 @@ Remotes.OpenPicker.OnClientEvent:Connect(function(slotId: string, options, meta)
 			row.BackgroundColor3 = Color3.fromRGB(35, 37, 45)
 		else
 			row.Activated:Connect(function()
+				SFX.Play("Click")
 				Remotes.PlacePet:FireServer(slotId, opt.Name)
 				picker.Visible = false
 			end)

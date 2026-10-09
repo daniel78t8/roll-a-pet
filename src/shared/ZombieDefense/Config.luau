@@ -55,6 +55,13 @@ Config.Economy = {
 
 	WaveBonusBase = 1, -- Bonus fuer jede ueberstandene Welle
 	WaveBonusPerWave = 1,
+
+	-- Fairness:
+	-- * Die Belohnung richtet sich nach den Wellen, die DU in dieser Runde
+	--   geschafft hast. Wer bei Welle 45 dazukommt, startet trotzdem bei 10 %.
+	-- * Kill-Coins werden nach Schaden aufgeteilt (kein "Last Hit"-Klauen).
+	-- * Den Wellen-Bonus bekommt nur, wessen Pets in der Welle Schaden gemacht haben.
+	-- Wer die Zombie-Map ohne platzierte Pets verlaesst, verliert seinen Fortschritt.
 }
 
 --------------------------------------------------------------------------
@@ -73,7 +80,11 @@ Config.Waves = {
 	MinSpawnInterval = 0.45,
 	SpawnIntervalDecay = 0.06, -- pro Welle schneller
 
-	HealthGrowthPerWave = 0.18,
+	-- Leben = Basis * (1 + Linear * (Welle-1) + Quadratisch * (Welle-1)^2)
+	-- Getestet per Simulation: 2 Common ~Welle 6, 3 Legendary ~Welle 33,
+	-- 3 Mythic ~Welle 55, 6 Mythic (2 Spieler) ~Welle 90.
+	HealthGrowthPerWave = 0.06,
+	HealthGrowthQuadratic = 0.001,
 	BossEvery = 5, -- jede 5. Welle kommt ein Boss
 }
 
@@ -202,6 +213,47 @@ Config.VFX = {
 	ProjectileSpeed = 70,
 	ShowDamageNumbers = true,
 	MaxActiveProjectiles = 60,
+	MaxViewDistance = 300, -- weiter weg (z.B. in der Lobby) werden keine Effekte gezeigt
+}
+
+--------------------------------------------------------------------------
+-- Sounds. Es sind eingebaute Roblox-Sounds eingetragen, damit es sofort
+-- klingt. Fuer bessere Sounds: im Creator Store (Toolbox -> Audio) einen
+-- Sound suchen, ID kopieren und z.B. Id = "rbxassetid://1234567" eintragen.
+-- Sounds, die nicht laden, werden einfach uebersprungen.
+--------------------------------------------------------------------------
+local SWOOSH = "rbxasset://sounds/swoosh.wav"
+local PING = "rbxasset://sounds/electronicpingshort.wav"
+local THUD = "rbxasset://sounds/action_jump_land.mp3"
+local OOF = "rbxasset://sounds/uuhhh.mp3"
+local GROAN = "rbxasset://sounds/action_get_up.mp3"
+
+Config.Sounds = {
+	Enabled = true,
+	MasterVolume = 1,
+	List = {
+		-- Pets schiessen (je Element)
+		ShootNormal = { Id = SWOOSH, Volume = 0.35, Pitch = 1.5 },
+		ShootFire = { Id = SWOOSH, Volume = 0.45, Pitch = 0.75 },
+		ShootIce = { Id = SWOOSH, Volume = 0.35, Pitch = 2 },
+		ShootLightning = { Id = PING, Volume = 0.4, Pitch = 0.5 },
+		ShootMagic = { Id = PING, Volume = 0.3, Pitch = 1.6 },
+		Hit = { Id = THUD, Volume = 0.4, Pitch = 1.6, MinGap = 0.04 },
+		Crit = { Id = PING, Volume = 0.45, Pitch = 2.2 },
+		-- Zombies
+		ZombieSpawn = { Id = GROAN, Volume = 0.3, Pitch = 0.6, MinGap = 0.3 },
+		ZombieDeath = { Id = OOF, Volume = 0.45, Pitch = 0.75, MinGap = 0.08 },
+		BossDeath = { Id = OOF, Volume = 1, Pitch = 0.4, MinGap = 0 },
+		HutHit = { Id = THUD, Volume = 0.9, Pitch = 0.5, MinGap = 0.1 },
+		-- Spiel und Oberflaeche (2D, ohne Position)
+		PetPlaced = { Id = PING, Volume = 0.5, Pitch = 1 },
+		Coin = { Id = PING, Volume = 0.3, Pitch = 1.8, MinGap = 0.06 },
+		WaveStart = { Id = SWOOSH, Volume = 0.6, Pitch = 0.5 },
+		BossIncoming = { Id = OOF, Volume = 0.8, Pitch = 0.3 },
+		WaveCleared = { Id = PING, Volume = 0.5, Pitch = 1.3 },
+		GameOver = { Id = OOF, Volume = 0.8, Pitch = 0.55 },
+		Click = { Id = PING, Volume = 0.25, Pitch = 2.5 },
+	},
 }
 
 return Config

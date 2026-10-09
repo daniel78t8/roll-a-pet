@@ -146,6 +146,7 @@ local function place(player: Player, slotId: string, petName: string)
 	model:PivotTo(CFrame.lookAt(center, facing) * pivotToCenter:Inverse())
 
 	model.Name = "Pet_" .. slotId
+	model.ModelStreamingMode = Enum.ModelStreamingMode.Atomic -- immer komplett laden
 	model:SetAttribute("SlotId", slotId)
 	model:SetAttribute("PetName", petName)
 	model:SetAttribute("Rarity", info.Rarity)
@@ -360,6 +361,22 @@ end
 
 function PetService.HasPets(player: Player): boolean
 	return countPlaced(player) > 0
+end
+
+-- Entfernt Pets, die der Spieler inzwischen nicht mehr besitzt (z.B. verkauft)
+function PetService.Revalidate()
+	for slotId, p in placed do
+		local owned = 0
+		for _, name in PetInventory.GetPets(p.Owner) do
+			if name == p.Info.Name then
+				owned += 1
+			end
+		end
+		if countPlaced(p.Owner, p.Info.Name) > owned then
+			remove(slotId)
+			message(p.Owner, ("%s wurde entfernt, weil du es nicht mehr hast."):format(p.Info.Name), "Error")
+		end
+	end
 end
 
 return PetService
